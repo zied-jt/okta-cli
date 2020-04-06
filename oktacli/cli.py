@@ -501,6 +501,40 @@ def groups_clear(name_or_id, use_id):
     return "All users removed"
 
 
+@click.group(name="rules")
+def cli_rules():
+    """Group rules operations"""
+    pass
+
+@cli_rules.command(name="add", context_settings=CONTEXT_SETTINGS)
+@click.option("-n", "--name", required=True, help="rule name")
+@click.option("-g", "--groupids", required=True, help="group ids dynamicly updated by this rule")
+@click.option("-e", "--expression", default=None,required=True, prompt="Rule expression", help="rule expression")
+@click.option("-t", "--expression-type", default="urn:okta:expression:1.0",help="expression type, default is urn:okta:expression:1.0")
+@click.option("--groups-exclude", default=None)
+@click.option("--users-exclude", default=None)
+@_output_type_command_wrapper("id,type,profile.name")
+def groups_rules_add(name, expression, expression_type, groups_exclude, users_exclude, groupids, **kwargs):
+    """Create a new group rule"""
+    conditions = {}
+    conditions["expression"]["type"] = expression_type
+    conditions["expression"]["value"] = expression
+    if groups_exclude is not None:
+        conditions["people"]["groups"] = {"exclude": list(groups_exclude)}
+    if users_exclude is not None:
+        conditions["people"]["users"] = {"exclude": list(users_exclude)}
+ 
+    new_rule = {}
+    new_rule["name"]= name
+    new_rule["type"]= "group_rule"
+    new_rule["conditions"] = conditions
+    new_rule["actions"] = {"assignUserToGroups": {"groupIds": list(groupids)}}
+    return okta_manager.call_okta(f"/groups/rules", REST.post, body_obj=new_rule)
+
+
+cli_groups.add_command(cli_rules)
+
+
 @click.group(name="apps")
 def cli_apps():
     """Application operations"""
