@@ -96,6 +96,18 @@ def _command_wrapper(func):
                     print(json.dumps(rv, indent=2, sort_keys=True))
             else:
                 print(rv)
+        except TypeError:
+            if type(rv) is requests.models.Response:
+                if rv.status_code in [204, 202]:
+                    print("request succeded")
+                else:
+                    try:
+                        print(json.dumps(json.loads(rv.content),
+                                         indent=2, sort_keys=True))
+                    except json.decoder.JSONDecodeError:
+                        print(rv.content)
+            else:
+                print(rv)
         except ExitException as e:
             print("ERROR: {}".format(str(e)), file=sys.stderr)
             sys.exit(-1)
@@ -189,8 +201,8 @@ def _okta_get_and_filter(name,
                          lookup=lambda x: x["profile"]["name"]):
     things = okta_manager.call_okta(f"/{thing}", REST.get)
     things = list(filter(
-            lambda x: lookup(x).lower().find(name.lower()) != -1,
-            things))
+        lambda x: lookup(x).lower().find(name.lower()) != -1,
+        things))
     if unique:
         if len(things) > 1:
             raise ExitException("Group name must be unique. "
@@ -210,7 +222,7 @@ def _okta_get_by_id_or(label_or_id, unique=False, thing="groups",
         pass
     if not things:
         things = _okta_get_and_filter(
-                label_or_id, unique=unique, lookup=lookup, thing=thing)
+            label_or_id, unique=unique, lookup=lookup, thing=thing)
     return things
 
 
@@ -441,8 +453,8 @@ def groups_adduser(group, user, **kwargs):
     Note that you must use Okta's user and group IDs.
     """
     rsp = okta_manager.call_okta_raw(
-            f"/groups/{group}/users/{user}",
-            REST.put)
+        f"/groups/{group}/users/{user}",
+        REST.put)
     return f"User {user} added to group {group}"
 
 
@@ -461,8 +473,8 @@ def groups_removeuser(group, user, **kwargs):
     Note that you must use Okta's user and group IDs.
     """
     rsp = okta_manager.call_okta_raw(
-            f"/groups/{group}/users/{user}",
-            REST.delete)
+        f"/groups/{group}/users/{user}",
+        REST.delete)
     return f"User {user} removed from group {group}"
 
 
@@ -506,30 +518,70 @@ def cli_rules():
     """Group rules operations"""
     pass
 
+
+@cli_rules.command(name="list", context_settings=CONTEXT_SETTINGS)
+@_command_wrapper
+def groups_rules_list(**kwargs):
+    """List all rules"""
+    return okta_manager.call_okta_raw("/groups/rules", REST.get)
+
+
+@cli_rules.command(name="activate", context_settings=CONTEXT_SETTINGS)
+@click.option("-r", "--ruleid", required=True, help="rule id to activate")
+@_command_wrapper
+def groups_rules_activate(ruleid, **kwargs):
+    """ activate rule"""
+    return okta_manager.call_okta_raw(
+        f"/groups/rules/{ruleid}/lifecycle/activate", REST.post)
+
+
+@cli_rules.command(name="deactivate", context_settings=CONTEXT_SETTINGS)
+@click.option("-r", "--ruleid", required=True, help="rule id to deactivate")
+@_command_wrapper
+def groups_rules_deactivate(ruleid, **kwargs):
+    """ deactivate rule"""
+    return okta_manager.call_okta_raw(
+        f"/groups/rules/{ruleid}/lifecycle/deactivate", REST.post)
+
+
 @cli_rules.command(name="add", context_settings=CONTEXT_SETTINGS)
 @click.option("-n", "--name", required=True, help="rule name")
-@click.option("-g", "--groupids", required=True, help="group ids dynamicly updated by this rule")
-@click.option("-e", "--expression", default=None,required=True, prompt="Rule expression", help="rule expression")
-@click.option("-t", "--expression-type", default="urn:okta:expression:1.0",help="expression type, default is urn:okta:expression:1.0")
+@click.option("-g", "--groupids", required=True,
+              help="group ids dynamicly updated by this rule")
+@click.option("-e", "--expression", default=None, required=True,
+              prompt="Rule expression", help="rule expression")
+@click.option("-t", "--expression-type", default="urn:okta:expression:1.0",
+              help="expression type, default is urn:okta:expression:1.0")
 @click.option("--groups-exclude", default=None)
 @click.option("--users-exclude", default=None)
 @_output_type_command_wrapper("id,type,profile.name")
-def groups_rules_add(name, expression, expression_type, groups_exclude, users_exclude, groupids, **kwargs):
+def groups_rules_add(name, expression, expression_type,
+                     groups_exclude, users_exclude, groupids, **kwargs):
     """Create a new group rule"""
-    conditions = {}
+    conditions = {"expression": dict()}
     conditions["expression"]["type"] = expression_type
-    conditions["expression"]["value"] = expression
+    ## conditions["expression"]["value"] = expression
+    conditions["expression"]["value"] = 'isMemberOfGroup("00g3afxs8wLUISpZN357")'
     if groups_exclude is not None:
         conditions["people"]["groups"] = {"exclude": list(groups_exclude)}
     if users_exclude is not None:
         conditions["people"]["users"] = {"exclude": list(users_exclude)}
- 
     new_rule = {}
-    new_rule["name"]= name
-    new_rule["type"]= "group_rule"
+    new_rule["name"] = name
+    new_rule["type"] = "group_rule"
     new_rule["conditions"] = conditions
-    new_rule["actions"] = {"assignUserToGroups": {"groupIds": list(groupids)}}
+    new_rule["actions"] = {"assignUserToGroups": {
+        "groupIds": groupids.split(',')}}
+    print(new_rule)
     return okta_manager.call_okta(f"/groups/rules", REST.post, body_obj=new_rule)
+
+
+@cli_rules.command(name="delete", context_settings=CONTEXT_SETTINGS)
+@click.option("-r", "--ruleid", required=True, help="rule id to delete")
+@_command_wrapper
+def groups_rules_delete(ruleid, **kwargs):
+    """ delete rule"""
+    return okta_manager.call_okta_raw(f"/groups/rules/{ruleid}", REST.delete)
 
 
 cli_groups.add_command(cli_rules)
@@ -742,8 +794,8 @@ def users_list(matches, partial, api_filter, api_search, **kwargs):
     those either use the 'dump' command, or use 'users list' twice, the 2nd
     time adding this query: '-s "status eq \\"DEPROVISIONED\\""'."""
     users = okta_manager.list_users(
-            filter_query=api_filter,
-            search_query=api_search)
+        filter_query=api_filter,
+        search_query=api_search)
     filters_dict = {k: v for k, v in map(lambda x: x.split("="), matches)}
     return list(filter_users(users, filters=filters_dict, partial=partial))
 
@@ -1163,7 +1215,8 @@ def raw_get(api_endpoint, params, limit, **kwargs):
     """Perform a GET request against the specified API endpoint"""
     if not api_endpoint.startswith("/"):
         api_endpoint = "/" + api_endpoint
-    p_dict = dict([(y[0], y[1]) for y in map(lambda x: x.split("=", 1), params)])
+    p_dict = dict([(y[0], y[1])
+                   for y in map(lambda x: x.split("=", 1), params)])
     rv = okta_manager.call_okta(api_endpoint, REST.get, params=p_dict)
     return rv
 
